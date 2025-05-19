@@ -99,7 +99,7 @@ class ExerciseMatchOptions(models.Model):
     answer = models.TextField()
 
     def __str__(self):
-        return self.kanji
+        return f"{self.kanji} - {self.answer}"
 
 
 class LessonsExercises(models.Model):

@@ -1,6 +1,6 @@
 from django.contrib.auth import authenticate
 from rest_framework import serializers
-from .models import User, ExerciseMatch, Group, GroupsStudents, Chat
+from .models import User, ExerciseMatch, ExerciseMatchOptions, Group, GroupsStudents, Chat
 
 class UserSimpleSerializer(serializers.ModelSerializer):
     class Meta:
@@ -88,6 +88,11 @@ class LoginSerializer(serializers.Serializer):
 class ExerciseMatchSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExerciseMatch
+        fields = '__all__'
+
+class ExerciseMatchOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExerciseMatchOptions
         fields = '__all__'
 
 class GroupSerializer(serializers.ModelSerializer):

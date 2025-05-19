@@ -9,7 +9,7 @@ from .views import (
     RequestToJoinGroup,
     PendingRequestsView,
     ApproveRequestView, CurrentUserView, MyPendingRequestsView,
-SendMessageView, GetConversationView, UserListView, SearchGroupsView, CancelRequestView, GroupDetailView,
+SendMessageView, GetConversationView, UserListView, SearchGroupsView, CancelRequestView, GroupDetailView, ExerciseMatchOptionsListCreateView,
 )
 
 router = DefaultRouter()
@@ -23,6 +23,7 @@ urlpatterns = [
     path('users/me/', CurrentUserView.as_view(), name='current-user'),
 
     path('exercise-match/', ExerciseMatchListCreateView.as_view(), name='exercise-match'),
+    path('exercise-match-options/', ExerciseMatchOptionsListCreateView.as_view(), name='exercise-match-options'),
 
     path('groups/', MyGroupsView.as_view(), name='my-groups'),
     path('groups/search/', SearchGroupsView.as_view(), name='search-groups'),

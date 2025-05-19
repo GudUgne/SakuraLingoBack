@@ -329,3 +329,17 @@ class GroupDetailView(APIView):
             "name":     group.name,
             "students": students
         })
+
+
+class ExerciseMatchOptionsListCreateView(APIView):
+    def get(self, request):
+        options = ExerciseMatchOptions.objects.all()
+        serializer = ExerciseMatchOptionSerializer(options, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = ExerciseMatchOptionSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
