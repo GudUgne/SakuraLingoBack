@@ -1,6 +1,6 @@
 from django.contrib.auth import authenticate
 from rest_framework import serializers
-from .models import User, ExerciseMatch, ExerciseMatchOptions, Group, GroupsStudents, Chat
+from .models import User, ExerciseMatch, ExerciseMatchOptions, Group, GroupsStudents, Chat, ExerciseMultiChoice, ExerciseMultiChoiceOptions
 
 class UserSimpleSerializer(serializers.ModelSerializer):
     class Meta:
@@ -94,6 +94,18 @@ class ExerciseMatchOptionsSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExerciseMatchOptions
         fields = ['id', 'exercise_match', 'kanji', 'answer']
+
+
+class ExerciseMultiChoiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExerciseMultiChoice
+        fields = ['id', 'question', 'jlpt_level']
+
+
+class ExerciseMultiChoiceOptionsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExerciseMultiChoiceOptions
+        fields = ['id', 'exercise_mc', 'answer', 'is_correct']
 
 class GroupSerializer(serializers.ModelSerializer):
     teacher = UserSimpleSerializer(read_only=True)
