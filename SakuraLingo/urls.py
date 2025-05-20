@@ -9,7 +9,7 @@ from .views import (
     RequestToJoinGroup,
     PendingRequestsView,
     ApproveRequestView, CurrentUserView, MyPendingRequestsView,
-SendMessageView, GetConversationView, UserListView, SearchGroupsView, CancelRequestView, GroupDetailView, ExerciseMatchOptionsListCreateView,
+SendMessageView, GetConversationView, UserListView, SearchGroupsView, CancelRequestView, GroupDetailView, ExerciseMatchOptionsListCreateView,ExerciseMultiChoiceView,
 )
 
 router = DefaultRouter()
@@ -24,9 +24,17 @@ urlpatterns = [
 
     # path('exercise-match/', ExerciseMatchListCreateView.as_view(), name='exercise-match'),
     # path('exercise-match-options/', ExerciseMatchOptionsListCreateView.as_view(), name='exercise-match-options'),
-    path('exercise-match/', ExerciseMatchListCreateView.as_view(), name='exercise-match'),
+
+    path('exercise-match/', ExerciseMatchListCreateView.as_view(), name='exercise-match-list'),
     path('exercise-match/<int:match_id>/', ExerciseMatchListCreateView.as_view(), name='exercise-match-detail'),
+
+    # Match options endpoints
     path('exercise-match-options/', ExerciseMatchOptionsListCreateView.as_view(), name='exercise-match-options'),
+
+    # Multiple choice endpoints
+    path('exercise-multichoice/', ExerciseMultiChoiceView.as_view(), name='exercise-multichoice-list'),
+    path('exercise-multichoice/<int:question_id>/', ExerciseMultiChoiceView.as_view(),
+         name='exercise-multichoice-detail'),
 
     path('groups/', MyGroupsView.as_view(), name='my-groups'),
     path('groups/search/', SearchGroupsView.as_view(), name='search-groups'),

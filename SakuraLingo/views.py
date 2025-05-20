@@ -10,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import ExerciseMatch, Group, GroupsStudents, User, Chat
+from .models import ExerciseMatch, Group, GroupsStudents, User, Chat, ExerciseMatchOptions
 from .serializers import UserUpdateSerializer, UserSimpleSerializer, LoginSerializer, RegisterSerializer, ExerciseMatchSerializer, GroupSerializer, GroupsStudentsSerializer, ChatSerializer, ExerciseMatchOptionsSerializer
 
 
@@ -79,10 +79,22 @@ class LoginView(APIView):
 
 class ExerciseMatchListCreateView(APIView):
     def get(self, request):
-        """Get all exercise matches."""
+        """Get all exercise matches with their first option."""
         matches = ExerciseMatch.objects.all()
-        serializer = ExerciseMatchSerializer(matches, many=True)
-        return Response(serializer.data)
+        result = []
+
+        for match in matches:
+            match_data = ExerciseMatchSerializer(match).data
+
+            # Get the first option for this match
+            option = ExerciseMatchOptions.objects.filter(exercise_match=match).first()
+            if option:
+                match_data['kanji'] = option.kanji
+                match_data['answer'] = option.answer
+
+            result.append(match_data)
+
+        return Response(result)
 
     def post(self, request):
         """Create a new exercise match."""
@@ -94,20 +106,17 @@ class ExerciseMatchListCreateView(APIView):
 
     def delete(self, request, match_id):
         """Delete an exercise match and all its options."""
-        match = ExerciseMatch.objects.filter(id=match_id).first()
-        if not match:
-            return Response(
-                {'detail': 'Match not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        try:
+            match = ExerciseMatch.objects.get(id=match_id)
+        except ExerciseMatch.DoesNotExist:
+            return Response({'detail': 'Match not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Delete all options first to maintain referential integrity
+        # Delete options first to maintain referential integrity
         ExerciseMatchOptions.objects.filter(exercise_match=match).delete()
 
         # Delete the match
         match.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-
 
 # 1. GET /api/groups/ → User's groups (joined or owned)
 class MyGroupsView(generics.ListAPIView):
@@ -389,3 +398,94 @@ class ExerciseMatchOptionsListCreateView(APIView):
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ExerciseMultiChoiceView(APIView):
+    def get(self, request):
+        """Get all multiple choice questions with their options."""
+        questions = ExerciseMultiChoice.objects.all()
+        result = []
+
+        for question in questions:
+            question_data = ExerciseMultiChoiceSerializer(question).data
+            options = ExerciseMultiChoiceOptions.objects.filter(exercise_mc=question)
+            question_data['options'] = ExerciseMultiChoiceOptionsSerializer(options, many=True).data
+            result.append(question_data)
+
+        return Response(result)
+
+    def post(self, request):
+        """Create a new multiple choice question with options."""
+        question_data = {
+            'question': request.data.get('question'),
+            'jlpt_level': request.data.get('jlpt_level')
+        }
+
+        # Validate and save the question
+        question_serializer = ExerciseMultiChoiceSerializer(data=question_data)
+        if not question_serializer.is_valid():
+            return Response(question_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check that options were provided
+        options_data = request.data.get('options', [])
+        if not options_data:
+            return Response(
+                {'detail': 'At least one option is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Ensure at least one option is marked as correct
+        correct_options = [opt for opt in options_data if opt.get('is_correct')]
+        if not correct_options:
+            return Response(
+                {'detail': 'At least one option must be marked as correct'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Save the question
+        question = question_serializer.save()
+
+        # Save each option
+        for option_data in options_data:
+            option = {
+                'exercise_mc': question.id,
+                'answer': option_data.get('answer'),
+                'is_correct': option_data.get('is_correct', False)
+            }
+            option_serializer = ExerciseMultiChoiceOptionsSerializer(data=option)
+            if option_serializer.is_valid():
+                option_serializer.save()
+            else:
+                # Delete the question if option validation fails
+                question.delete()
+                return Response(
+                    option_serializer.errors,
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Return the complete question with options
+        return Response(
+            self.get_question_with_options(question),
+            status=status.HTTP_201_CREATED
+        )
+
+    def delete(self, request, question_id):
+        """Delete a multiple choice question and all its options."""
+        try:
+            question = ExerciseMultiChoice.objects.get(id=question_id)
+        except ExerciseMultiChoice.DoesNotExist:
+            return Response({'detail': 'Question not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Delete all options first
+        ExerciseMultiChoiceOptions.objects.filter(exercise_mc=question).delete()
+        # Delete the question
+        question.delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def get_question_with_options(self, question):
+        """Helper to format a question with its options."""
+        question_data = ExerciseMultiChoiceSerializer(question).data
+        options = ExerciseMultiChoiceOptions.objects.filter(exercise_mc=question)
+        question_data['options'] = ExerciseMultiChoiceOptionsSerializer(options, many=True).data
+        return question_data
