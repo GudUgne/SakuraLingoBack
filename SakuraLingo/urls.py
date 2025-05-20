@@ -22,7 +22,10 @@ urlpatterns = [
     path('users/', UserListView.as_view(), name='user_list'),
     path('users/me/', CurrentUserView.as_view(), name='current-user'),
 
+    # path('exercise-match/', ExerciseMatchListCreateView.as_view(), name='exercise-match'),
+    # path('exercise-match-options/', ExerciseMatchOptionsListCreateView.as_view(), name='exercise-match-options'),
     path('exercise-match/', ExerciseMatchListCreateView.as_view(), name='exercise-match'),
+    path('exercise-match/<int:match_id>/', ExerciseMatchListCreateView.as_view(), name='exercise-match-detail'),
     path('exercise-match-options/', ExerciseMatchOptionsListCreateView.as_view(), name='exercise-match-options'),
 
     path('groups/', MyGroupsView.as_view(), name='my-groups'),

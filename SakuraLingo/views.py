@@ -77,22 +77,37 @@ class LoginView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# class ExerciseMatchViewSet(viewsets.ModelViewSet):
-#     queryset = ExerciseMatch.objects.all()
-#     serializer_class = ExerciseMatchSerializer
-
 class ExerciseMatchListCreateView(APIView):
     def get(self, request):
+        """Get all exercise matches."""
         matches = ExerciseMatch.objects.all()
         serializer = ExerciseMatchSerializer(matches, many=True)
         return Response(serializer.data)
 
     def post(self, request):
+        """Create a new exercise match."""
         serializer = ExerciseMatchSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, match_id):
+        """Delete an exercise match and all its options."""
+        match = ExerciseMatch.objects.filter(id=match_id).first()
+        if not match:
+            return Response(
+                {'detail': 'Match not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Delete all options first to maintain referential integrity
+        ExerciseMatchOptions.objects.filter(exercise_match=match).delete()
+
+        # Delete the match
+        match.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 # 1. GET /api/groups/ → User's groups (joined or owned)
 class MyGroupsView(generics.ListAPIView):
@@ -333,12 +348,43 @@ class GroupDetailView(APIView):
 
 class ExerciseMatchOptionsListCreateView(APIView):
     def get(self, request):
+        """Get all exercise match options."""
         options = ExerciseMatchOptions.objects.all()
-        serializer = ExerciseMatchOptionSerializer(options, many=True)
+        serializer = ExerciseMatchOptionsSerializer(options, many=True)
         return Response(serializer.data)
 
     def post(self, request):
-        serializer = ExerciseMatchOptionSerializer(data=request.data)
+        """Create a new exercise match option with duplicate checking."""
+        # Extract data
+        exercise_match_id = request.data.get('exercise_match')
+        kanji = request.data.get('kanji', '')
+        answer = request.data.get('answer', '')
+
+        if not all([exercise_match_id, kanji, answer]):
+            return Response(
+                {'detail': 'exercise_match, kanji, and answer are all required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check for duplicate in either direction (kanji→answer or answer→kanji)
+        normalized_answer = answer.lower()
+        normalized_kanji = kanji.lower()
+
+        existing_option = ExerciseMatchOptions.objects.filter(
+            # Check if this exact pair already exists
+            Q(kanji__iexact=kanji, answer__iexact=answer) |
+            # Or if the reverse mapping exists (answer→kanji)
+            Q(kanji__iexact=answer, answer__iexact=kanji)
+        ).first()
+
+        if existing_option:
+            return Response(
+                {'detail': f'A matching pair with kanji "{kanji}" and meaning "{answer}" already exists'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # If no duplicate found, create the new option
+        serializer = ExerciseMatchOptionsSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)

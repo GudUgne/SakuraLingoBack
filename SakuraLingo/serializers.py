@@ -88,12 +88,12 @@ class LoginSerializer(serializers.Serializer):
 class ExerciseMatchSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExerciseMatch
-        fields = '__all__'
+        fields = ['id', 'jlpt_level']
 
-class ExerciseMatchOptionSerializer(serializers.ModelSerializer):
+class ExerciseMatchOptionsSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExerciseMatchOptions
-        fields = '__all__'
+        fields = ['id', 'exercise_match', 'kanji', 'answer']
 
 class GroupSerializer(serializers.ModelSerializer):
     teacher = UserSimpleSerializer(read_only=True)
