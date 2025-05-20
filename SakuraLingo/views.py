@@ -11,7 +11,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import ExerciseMatch, Group, GroupsStudents, User, Chat
-from .serializers import UserUpdateSerializer, UserSimpleSerializer, LoginSerializer, RegisterSerializer, ExerciseMatchSerializer, GroupSerializer, GroupsStudentsSerializer, ChatSerializer
+from .serializers import UserUpdateSerializer, UserSimpleSerializer, LoginSerializer, RegisterSerializer, ExerciseMatchSerializer, GroupSerializer, GroupsStudentsSerializer, ChatSerializer, ExerciseMatchOptionSerializer
 
 
 class CurrentUserView(APIView):
