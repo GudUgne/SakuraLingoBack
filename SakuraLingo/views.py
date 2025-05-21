@@ -520,3 +520,85 @@ class ExerciseMultiChoiceView(APIView):
         options = ExerciseMultiChoiceOptions.objects.filter(exercise_mc=question)
         question_data['options'] = ExerciseMultiChoiceOptionsSerializer(options, many=True).data
         return question_data
+
+
+class ExerciseFreetextListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        exercises = ExerciseFreetext.objects.all()
+        serializer = ExerciseFreetextSerializer(exercises, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        serializer = ExerciseFreetextSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ExerciseFreetextViewSet(viewsets.ModelViewSet):
+    queryset = ExerciseFreetext.objects.all()
+    serializer_class = ExerciseFreetextSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        # Teachers can see all exercises, students only see published ones
+        if self.request.user.is_teacher:
+            return ExerciseFreetext.objects.all()
+        return ExerciseFreetext.objects.filter(is_published=True)
+
+class FreetextSubmissionViewSet(viewsets.ModelViewSet):
+    serializer_class = FreetextSubmissionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_teacher:
+            # Teachers can see all submissions
+            return FreetextSubmission.objects.all()
+        # Students can only see their own submissions
+        return FreetextSubmission.objects.filter(student=user)
+
+    def perform_create(self, serializer):
+        serializer.save(student=self.request.user)
+
+
+class TeacherReviewSubmissionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, submission_id):
+        # Ensure user is a teacher
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can review submissions"}, status=status.HTTP_403_FORBIDDEN)
+
+        submission = get_object_or_404(FreetextSubmission, id=submission_id)
+        serializer = FreetextSubmissionSerializer(submission, data=request.data, partial=True)
+        if serializer.is_valid():
+            submission = serializer.save(is_reviewed=True)
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PendingSubmissionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Ensure user is a teacher
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can view pending submissions"}, status=status.HTTP_403_FORBIDDEN)
+
+        pending = FreetextSubmission.objects.filter(is_reviewed=False)
+        serializer = FreetextSubmissionSerializer(pending, many=True)
+        return Response(serializer.data)
+
+
+class PendingFreetextSubmissionsView(generics.ListAPIView):
+    serializer_class = FreetextSubmissionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        if not self.request.user.is_teacher:
+            return FreetextSubmission.objects.none()
+        return FreetextSubmission.objects.filter(is_reviewed=False)

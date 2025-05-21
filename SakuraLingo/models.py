@@ -84,13 +84,17 @@ class ExerciseMatch(models.Model):
     def __str__(self):
         return f"Match Exercise Level {self.jlpt_level}"
 
-# class ExerciseMatch(models.Model):
-#     jlpt_level = models.IntegerField()
-#     kanji = models.TextField()
-#     answer = models.TextField()
-#
-#     def __str__(self):
-#         return f"{self.kanji} - {self.answer} (JLPT N{self.jlpt_level})"
+class FreetextSubmission(models.Model):
+    exercise = models.ForeignKey(ExerciseFreetext, on_delete=models.CASCADE)
+    student = models.ForeignKey(User, on_delete=models.CASCADE)
+    student_answer = models.TextField()
+    submission_date = models.DateTimeField(auto_now_add=True)
+    is_reviewed = models.BooleanField(default=False)
+    is_correct = models.BooleanField(default=False)
+    teacher_feedback = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"Submission by {self.student.username} for {self.exercise.question[:30]}"
 
 
 class ExerciseMatchOptions(models.Model):

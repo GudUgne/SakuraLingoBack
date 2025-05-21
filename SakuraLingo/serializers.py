@@ -1,6 +1,6 @@
 from django.contrib.auth import authenticate
 from rest_framework import serializers
-from .models import User, ExerciseMatch, ExerciseMatchOptions, Group, GroupsStudents, Chat, ExerciseMultiChoice, ExerciseMultiChoiceOptions
+from .models import User, ExerciseMatch, ExerciseMatchOptions, Group, GroupsStudents, Chat, ExerciseMultiChoice, ExerciseMultiChoiceOptions, ExerciseFreetext, FreetextSubmission
 
 class UserSimpleSerializer(serializers.ModelSerializer):
     class Meta:
@@ -127,3 +127,21 @@ class ChatSerializer(serializers.ModelSerializer):
     class Meta:
         model = Chat
         fields = '__all__'
+
+
+class ExerciseFreetextSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExerciseFreetext
+        fields = '__all__'
+
+
+class FreetextSubmissionSerializer(serializers.ModelSerializer):
+    exercise_details = ExerciseFreetextSerializer(source='exercise', read_only=True)
+    student_name = serializers.CharField(source='student.username', read_only=True)
+
+    class Meta:
+        model = FreetextSubmission
+        fields = ['id', 'exercise', 'exercise_details', 'student', 'student_name',
+                  'student_answer', 'submission_date', 'is_reviewed',
+                  'is_correct', 'teacher_feedback']
+        read_only_fields = ['submission_date']
