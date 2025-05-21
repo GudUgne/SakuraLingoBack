@@ -10,9 +10,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import ExerciseMatch, Group, GroupsStudents, User, Chat, ExerciseMatchOptions, ExerciseMultiChoiceOptions, ExerciseMultiChoice
+from .models import ExerciseMatch, Group, GroupsStudents, User, Chat, ExerciseMatchOptions, ExerciseMultiChoiceOptions, ExerciseMultiChoice, ExerciseFreetext
 from .serializers import UserUpdateSerializer, UserSimpleSerializer, LoginSerializer, RegisterSerializer, \
-    ExerciseMatchSerializer, GroupSerializer, GroupsStudentsSerializer, ChatSerializer, ExerciseMatchOptionsSerializer, ExerciseMultiChoiceSerializer, ExerciseMultiChoiceOptionsSerializer
+    ExerciseMatchSerializer, GroupSerializer, GroupsStudentsSerializer, ChatSerializer, ExerciseMatchOptionsSerializer, \
+    ExerciseMultiChoiceSerializer, ExerciseMultiChoiceOptionsSerializer, ExerciseFreetextSerializer, FreetextSubmissionSerializer
 
 
 class CurrentUserView(APIView):
@@ -531,6 +532,11 @@ class ExerciseFreetextListCreateView(APIView):
         return Response(serializer.data)
 
     def post(self, request):
+        # Only teachers can create exercises
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can create exercises"},
+                            status=status.HTTP_403_FORBIDDEN)
+
         serializer = ExerciseFreetextSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
@@ -602,3 +608,39 @@ class PendingFreetextSubmissionsView(generics.ListAPIView):
         if not self.request.user.is_teacher:
             return FreetextSubmission.objects.none()
         return FreetextSubmission.objects.filter(is_reviewed=False)
+
+
+class ExerciseFreetextDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self, pk):
+        try:
+            return ExerciseFreetext.objects.get(pk=pk)
+        except ExerciseFreetext.DoesNotExist:
+            raise Http404
+
+    def get(self, request, pk):
+        exercise = self.get_object(pk)
+        serializer = ExerciseFreetextSerializer(exercise)
+        return Response(serializer.data)
+
+    def put(self, request, pk):
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can update exercises"},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        exercise = self.get_object(pk)
+        serializer = ExerciseFreetextSerializer(exercise, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can delete exercises"},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        exercise = self.get_object(pk)
+        exercise.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

@@ -132,7 +132,7 @@ class ChatSerializer(serializers.ModelSerializer):
 class ExerciseFreetextSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExerciseFreetext
-        fields = '__all__'
+        fields = ['id', 'question', 'answer', 'jlpt_level']
 
 
 class FreetextSubmissionSerializer(serializers.ModelSerializer):

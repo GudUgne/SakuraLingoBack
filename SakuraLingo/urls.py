@@ -11,7 +11,8 @@ from .views import (
     ApproveRequestView, CurrentUserView, MyPendingRequestsView,
 SendMessageView, GetConversationView, UserListView, SearchGroupsView, CancelRequestView, GroupDetailView,
     ExerciseMatchOptionsListCreateView,ExerciseMultiChoiceView,
-    ExerciseFreetextListCreateView,FreetextSubmissionView, TeacherReviewSubmissionView, PendingSubmissionsView
+    ExerciseFreetextListCreateView, TeacherReviewSubmissionView, PendingSubmissionsView,
+ExerciseFreetextDetailView,
 )
 
 router = DefaultRouter()
@@ -36,8 +37,9 @@ urlpatterns = [
     path('exercise-multichoice/<int:question_id>/', ExerciseMultiChoiceView.as_view(),
          name='exercise-multichoice-detail'),
 
-    path('exercise-freetext/', ExerciseFreetextListCreateView.as_view(), name='exercise-freetext'),
-    path('freetext-submission/', FreetextSubmissionView.as_view(), name='freetext-submission'),
+    path('exercise-freetext/', ExerciseFreetextListCreateView.as_view(), name='exercise-freetext-list'),
+    path('exercise-freetext/<int:pk>/', ExerciseFreetextDetailView.as_view(), name='exercise-freetext-detail'),
+    # path('freetext-submission/', FreetextSubmissionView.as_view(), name='freetext-submission'),
     path('freetext-review/<int:submission_id>/', TeacherReviewSubmissionView.as_view(), name='freetext-review'),
     path('freetext-pending/', PendingSubmissionsView.as_view(), name='freetext-pending'),
 
