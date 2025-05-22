@@ -1,14 +1,16 @@
 from django.contrib.auth import authenticate
 from rest_framework import serializers
-from .models import User, ExerciseMatch, ExerciseMatchOptions, Group, GroupsStudents, Chat, ExerciseMultiChoice, ExerciseMultiChoiceOptions, ExerciseFreetext, FreetextSubmission
+from .models import User, ExerciseMatch, ExerciseMatchOptions, Group,\
+    GroupsStudents, Chat, ExerciseMultiChoice, ExerciseMultiChoiceOptions, ExerciseFreetext, \
+    FreetextSubmission, Lesson, LessonsExercises
 
+# AUTHORISATION - USER SERIALIZERS
 class UserSimpleSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'first_name', 'last_name']
 
 class UserUpdateSerializer(serializers.ModelSerializer):
-    # Write-only fields for password change
     current_password = serializers.CharField(write_only=True, required=False)
     password = serializers.CharField(write_only=True, required=False, min_length=8)
 
@@ -26,7 +28,6 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, attrs):
-        # If they're changing password, ensure they provided the current one and it's correct
         new_pw = attrs.get('password')
         if new_pw is not None:
             curr = attrs.get('current_password')
@@ -41,20 +42,16 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         return attrs
 
     def update(self, instance, validated_data):
-        # Pop off password fields so super().update() won't try to write them directly
         new_pw = validated_data.pop('password', None)
         validated_data.pop('current_password', None)
 
-        # Update other fields (first_name, last_name, etc.)
         instance = super().update(instance, validated_data)
 
-        # Now set the new password (if requested)
         if new_pw:
             instance.set_password(new_pw)
             instance.save()
 
         return instance
-
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -65,14 +62,11 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         is_teacher = validated_data.get("is_teacher", False)
-
         validated_data.pop("verification_status", None)
 
-        """Create user with hashed password"""
-        user = User.objects.create_user(**validated_data)  # Uses Django's create_user method for hashing
-        user.verification_status = not is_teacher  # Students auto-verified; teachers require manual check
+        user = User.objects.create_user(**validated_data)
+        user.verification_status = not is_teacher
         user.save()
-
         return user
 
 class LoginSerializer(serializers.Serializer):
@@ -85,6 +79,13 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid username or password.")
         return {"user": user}
 
+
+# EXERCISE SERIALIZERS
+class ExerciseFreetextSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExerciseFreetext
+        fields = ['id', 'question', 'answer', 'jlpt_level']
+
 class ExerciseMatchSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExerciseMatch
@@ -95,18 +96,29 @@ class ExerciseMatchOptionsSerializer(serializers.ModelSerializer):
         model = ExerciseMatchOptions
         fields = ['id', 'exercise_match', 'kanji', 'answer']
 
-
 class ExerciseMultiChoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExerciseMultiChoice
         fields = ['id', 'question', 'jlpt_level']
-
 
 class ExerciseMultiChoiceOptionsSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExerciseMultiChoiceOptions
         fields = ['id', 'exercise_mc', 'answer', 'is_correct']
 
+class FreetextSubmissionSerializer(serializers.ModelSerializer):
+    exercise_details = ExerciseFreetextSerializer(source='exercise', read_only=True)
+    student_name = serializers.CharField(source='student.username', read_only=True)
+
+    class Meta:
+        model = FreetextSubmission
+        fields = ['id', 'exercise', 'exercise_details', 'student', 'student_name',
+                  'student_answer', 'submission_date', 'is_reviewed',
+                  'is_correct', 'teacher_feedback']
+        read_only_fields = ['submission_date']
+
+
+# GROUP SERIALIZERS
 class GroupSerializer(serializers.ModelSerializer):
     teacher = UserSimpleSerializer(read_only=True)
 
@@ -123,25 +135,132 @@ class GroupsStudentsSerializer(serializers.ModelSerializer):
         fields = ['id', 'student', 'group', 'verification_status']
 
 
+# CHAT SERIALIZERS
 class ChatSerializer(serializers.ModelSerializer):
     class Meta:
         model = Chat
         fields = '__all__'
 
 
-class ExerciseFreetextSerializer(serializers.ModelSerializer):
+# class ExerciseFreetextSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = ExerciseFreetext
+#         fields = ['id', 'question', 'answer', 'jlpt_level']
+
+
+# class FreetextSubmissionSerializer(serializers.ModelSerializer):
+#     exercise_details = ExerciseFreetextSerializer(source='exercise', read_only=True)
+#     student_name = serializers.CharField(source='student.username', read_only=True)
+#
+#     class Meta:
+#         model = FreetextSubmission
+#         fields = ['id', 'exercise', 'exercise_details', 'student', 'student_name',
+#                   'student_answer', 'submission_date', 'is_reviewed',
+#                   'is_correct', 'teacher_feedback']
+#         read_only_fields = ['submission_date']
+
+# LESSON SERIALIZERS
+class LessonSerializer(serializers.ModelSerializer):
+    teacher = UserSimpleSerializer(read_only=True)
+
     class Meta:
-        model = ExerciseFreetext
-        fields = ['id', 'question', 'answer', 'jlpt_level']
+        model = Lesson
+        fields = ['id', 'name', 'lesson_type', 'jlpt_level', 'exercise_count', 'teacher']
+        read_only_fields = ['lesson_type', 'exercise_count']  # These are auto-calculated
 
 
-class FreetextSubmissionSerializer(serializers.ModelSerializer):
-    exercise_details = ExerciseFreetextSerializer(source='exercise', read_only=True)
-    student_name = serializers.CharField(source='student.username', read_only=True)
+class LessonsExercisesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LessonsExercises
+        fields = ['id', 'lesson', 'exercise_id', 'exercise_type']
+
+
+class LessonDetailSerializer(serializers.ModelSerializer):
+    """Detailed lesson serializer with exercises included"""
+    teacher = UserSimpleSerializer(read_only=True)
+    exercises = serializers.SerializerMethodField()
 
     class Meta:
-        model = FreetextSubmission
-        fields = ['id', 'exercise', 'exercise_details', 'student', 'student_name',
-                  'student_answer', 'submission_date', 'is_reviewed',
-                  'is_correct', 'teacher_feedback']
-        read_only_fields = ['submission_date']
+        model = Lesson
+        fields = ['id', 'name', 'lesson_type', 'jlpt_level', 'exercise_count', 'teacher', 'exercises']
+
+    def get_exercises(self, obj):
+        lesson_exercises = LessonsExercises.objects.filter(lesson=obj)
+        exercises = []
+
+        for le in lesson_exercises:
+            exercise_data = {
+                'id': le.exercise_id,
+                'type': le.exercise_type,
+                'lesson_exercise_id': le.id
+            }
+
+            # Fetch actual exercise data based on type
+            try:
+                if le.exercise_type == 'freetext':
+                    exercise = ExerciseFreetext.objects.get(id=le.exercise_id)
+                    exercise_data.update({
+                        'question': exercise.question,
+                        'answer': exercise.answer,
+                        'jlpt_level': exercise.jlpt_level
+                    })
+                elif le.exercise_type == 'multi-choice':
+                    exercise = ExerciseMultiChoice.objects.get(id=le.exercise_id)
+                    options = ExerciseMultiChoiceOptions.objects.filter(exercise_mc=exercise)
+                    exercise_data.update({
+                        'question': exercise.question,
+                        'jlpt_level': exercise.jlpt_level,
+                        'options': ExerciseMultiChoiceOptionsSerializer(options, many=True).data
+                    })
+                elif le.exercise_type == 'pair-match':
+                    exercise = ExerciseMatch.objects.get(id=le.exercise_id)
+                    option = ExerciseMatchOptions.objects.filter(exercise_match=exercise).first()
+                    if option:
+                        exercise_data.update({
+                            'kanji': option.kanji,
+                            'answer': option.answer,
+                            'jlpt_level': exercise.jlpt_level
+                        })
+            except Exception as e:
+                # Exercise might be deleted, skip it
+                continue
+
+            exercises.append(exercise_data)
+
+        return exercises
+
+
+class LessonCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating lessons with exercises"""
+    exercises = serializers.ListField(
+        child=serializers.DictField(
+            child=serializers.CharField()
+        ),
+        write_only=True,
+        required=False
+    )
+
+    class Meta:
+        model = Lesson
+        fields = ['id', 'name', 'lesson_type', 'jlpt_level', 'exercise_count', 'exercises']
+        read_only_fields = ['lesson_type', 'exercise_count']
+
+    def create(self, validated_data):
+        exercises_data = validated_data.pop('exercises', [])
+
+        # Create the lesson
+        lesson = Lesson.objects.create(**validated_data)
+
+        # Add exercises to the lesson
+        for exercise_data in exercises_data:
+            LessonsExercises.objects.create(
+                lesson=lesson,
+                exercise_id=exercise_data['id'],
+                exercise_type=exercise_data['type']
+            )
+
+        # Update lesson stats (this will be done automatically by the model's save method)
+        lesson.exercise_count = len(exercises_data)
+        lesson.save()
+
+        return lesson

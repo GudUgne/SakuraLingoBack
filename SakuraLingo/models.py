@@ -41,15 +41,81 @@ class User(AbstractUser):  # Extending Django's default user model
         return self.username
 
 
+# class Lesson(models.Model):
+#     teacher = models.ForeignKey(User, on_delete=models.CASCADE)
+#     name = models.CharField(max_length=100)
+#     lesson_type = models.CharField(max_length=100)
+#     jlpt_level = models.IntegerField()
+#     exercise_count = models.IntegerField()
+#
+#     def __str__(self):
+#         return self.name
+
+
 class Lesson(models.Model):
     teacher = models.ForeignKey(User, on_delete=models.CASCADE)
     name = models.CharField(max_length=100)
-    lesson_type = models.CharField(max_length=100)
-    jlpt_level = models.IntegerField()
-    exercise_count = models.IntegerField()
+    lesson_type = models.CharField(max_length=100, default='mixed')
+    jlpt_level = models.CharField(max_length=10, default='1-5')  # Changed to CharField to handle ranges
+    exercise_count = models.IntegerField(default=0)
 
     def __str__(self):
         return self.name
+
+    def update_lesson_stats(self):
+        """Update lesson type and JLPT level based on exercises"""
+        lesson_exercises = LessonsExercises.objects.filter(lesson=self)
+
+        if not lesson_exercises.exists():
+            self.lesson_type = 'empty'
+            self.jlpt_level = 'unknown'
+            self.exercise_count = 0
+            self.save()
+            return
+
+        # Update exercise count
+        self.exercise_count = lesson_exercises.count()
+
+        # Determine lesson type
+        exercise_types = set()
+        jlpt_levels = set()
+
+        for le in lesson_exercises:
+            exercise_types.add(le.exercise_type)
+
+            # Get JLPT level based on exercise type
+            try:
+                if le.exercise_type == 'freetext':
+                    exercise = ExerciseFreetext.objects.get(id=le.exercise_id)
+                    jlpt_levels.add(exercise.jlpt_level)
+                elif le.exercise_type == 'multi-choice':
+                    exercise = ExerciseMultiChoice.objects.get(id=le.exercise_id)
+                    jlpt_levels.add(exercise.jlpt_level)
+                elif le.exercise_type == 'pair-match':
+                    exercise = ExerciseMatch.objects.get(id=le.exercise_id)
+                    jlpt_levels.add(exercise.jlpt_level)
+            except:
+                # Exercise might be deleted, skip
+                continue
+
+        # Set lesson type
+        if len(exercise_types) == 1:
+            self.lesson_type = list(exercise_types)[0]
+        else:
+            self.lesson_type = 'mixed'
+
+        # Set JLPT level range
+        if jlpt_levels:
+            min_level = min(jlpt_levels)
+            max_level = max(jlpt_levels)
+            if min_level == max_level:
+                self.jlpt_level = str(min_level)
+            else:
+                self.jlpt_level = f"{min_level}-{max_level}"
+        else:
+            self.jlpt_level = 'unknown'
+
+        self.save()
 
 
 class ExerciseFreetext(models.Model):
@@ -106,38 +172,53 @@ class ExerciseMatchOptions(models.Model):
         return f"{self.kanji} - {self.answer}"
 
 
+# class LessonsExercises(models.Model):
+#     lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE)
+#     exercise_id = models.IntegerField()  # Exercise ID can be from any of the exercise tables
+#     exercise_type = models.CharField(max_length=50)  # This can be a string indicating the type of exercise
+#
+#     def save(self, *args, **kwargs):
+#         super().save(*args, **kwargs)
+#         self.update_lesson_type()
+#
+#     def delete(self, *args, **kwargs):
+#         super().delete(*args, **kwargs)
+#         self.update_lesson_type()
+#
+#     def update_lesson_type(self):
+#         lesson_exercises = LessonsExercises.objects.filter(lesson=self.lesson)
+#         exercise_types = set(lesson_exercises.values_list('exercise_type', flat=True))
+#
+#         if len(exercise_types) == 1:
+#             self.lesson.lesson_type = exercise_types.pop()
+#         else:
+#             self.lesson.lesson_type = 'mixed'
+#         self.lesson.save()
+#
+#     def __str__(self):
+#         return f"{self.lesson.name} - {self.exercise_id} ({self.exercise_type})"
+
 class LessonsExercises(models.Model):
     lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE)
     exercise_id = models.IntegerField()  # Exercise ID can be from any of the exercise tables
-    exercise_type = models.CharField(max_length=50)  # This can be a string indicating the type of exercise
+    exercise_type = models.CharField(max_length=50)  # 'freetext', 'multi-choice', 'pair-match'
+
+    class Meta:
+        unique_together = ['lesson', 'exercise_id', 'exercise_type']  # Prevent duplicates
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        self.update_lesson_type()
+        # Update lesson stats when exercise is added
+        self.lesson.update_lesson_stats()
 
     def delete(self, *args, **kwargs):
+        lesson = self.lesson
         super().delete(*args, **kwargs)
-        self.update_lesson_type()
-
-    def update_lesson_type(self):
-        lesson_exercises = LessonsExercises.objects.filter(lesson=self.lesson)
-        exercise_types = set(lesson_exercises.values_list('exercise_type', flat=True))
-
-        if len(exercise_types) == 1:
-            self.lesson.lesson_type = exercise_types.pop()
-        else:
-            self.lesson.lesson_type = 'mixed'
-        self.lesson.save()
+        # Update lesson stats when exercise is removed
+        lesson.update_lesson_stats()
 
     def __str__(self):
         return f"{self.lesson.name} - {self.exercise_id} ({self.exercise_type})"
-
-
-# Ensure signals are connected
-@receiver(post_save, sender=LessonsExercises)
-@receiver(post_delete, sender=LessonsExercises)
-def update_lesson_type_on_change(sender, instance, **kwargs):
-    instance.update_lesson_type()
 
 
 class Homework(models.Model):

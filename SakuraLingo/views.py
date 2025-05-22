@@ -10,12 +10,19 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import ExerciseMatch, Group, GroupsStudents, User, Chat, ExerciseMatchOptions, ExerciseMultiChoiceOptions, ExerciseMultiChoice, ExerciseFreetext
+from .models import (
+    ExerciseMatch, Group, GroupsStudents, User, Chat, ExerciseMatchOptions,
+    ExerciseMultiChoiceOptions, ExerciseMultiChoice, ExerciseFreetext,
+    Lesson, LessonsExercises
+)
+
 from .serializers import UserUpdateSerializer, UserSimpleSerializer, LoginSerializer, RegisterSerializer, \
     ExerciseMatchSerializer, GroupSerializer, GroupsStudentsSerializer, ChatSerializer, ExerciseMatchOptionsSerializer, \
-    ExerciseMultiChoiceSerializer, ExerciseMultiChoiceOptionsSerializer, ExerciseFreetextSerializer, FreetextSubmissionSerializer
+    ExerciseMultiChoiceSerializer, ExerciseMultiChoiceOptionsSerializer, \
+    ExerciseFreetextSerializer, FreetextSubmissionSerializer, \
+    LessonDetailSerializer, LessonCreateSerializer, LessonsExercisesSerializer, LessonSerializer
 
-
+# USER - AUTHORISATION VIEWS
 class CurrentUserView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -31,7 +38,6 @@ class CurrentUserView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        # Return the updated fields
         return Response(UserUpdateSerializer(user).data, status=status.HTTP_200_OK)
 
 class UserListView(APIView):
@@ -45,32 +51,22 @@ class RegisterView(APIView):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
-
-            # Generate JWT tokens
             refresh = RefreshToken.for_user(user)
-
             return Response({
                 "message": "User registered successfully!",
                 "verification_status": user.verification_status,
                 "access_token": str(refresh.access_token),
                 "refresh_token": str(refresh),
             }, status=status.HTTP_201_CREATED)
-
-        print("Registration error:", serializer.errors)
-
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 class LoginView(APIView):
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.validated_data['user']
-            login(request, user)  # Django logs in the user
-
-            # Generate JWT tokens
+            login(request, user)
             refresh = RefreshToken.for_user(user)
-
             return Response({
                 "message": "Login successful!",
                 "access_token": str(refresh.access_token),
@@ -79,46 +75,81 @@ class LoginView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+# EXERCISE VIEWS
 class ExerciseMatchListCreateView(APIView):
     def get(self, request):
-        """Get all exercise matches with their first option."""
+        """Get all matching exercises with their pairs - exclude single-pair library exercises"""
         matches = ExerciseMatch.objects.all()
         result = []
 
         for match in matches:
-            match_data = ExerciseMatchSerializer(match).data
+            # Get all pairs for this exercise
+            pairs = ExerciseMatchOptions.objects.filter(exercise_match=match)
+            pair_count = pairs.count()
 
-            # Get the first option for this match
-            option = ExerciseMatchOptions.objects.filter(exercise_match=match).first()
-            if option:
-                match_data['kanji'] = option.kanji
-                match_data['answer'] = option.answer
-
-            result.append(match_data)
+            # Only include exercises with 2 or more pairs (real exercises, not library pairs)
+            if pair_count >= 2:
+                match_data = {
+                    'id': match.id,
+                    'jlpt_level': match.jlpt_level,
+                    'pairs': [{'kanji': pair.kanji, 'answer': pair.answer} for pair in pairs],
+                    'pair_count': pair_count
+                }
+                result.append(match_data)
 
         return Response(result)
 
     def post(self, request):
-        """Create a new exercise match."""
-        serializer = ExerciseMatchSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        """Create a new matching exercise with multiple pairs"""
+        jlpt_level = request.data.get('jlpt_level')
+        pairs_data = request.data.get('pairs', [])
+
+        if not pairs_data or len(pairs_data) < 2:
+            return Response(
+                {'detail': 'At least 2 pairs are required for a matching exercise'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Create the exercise
+        exercise_match = ExerciseMatch.objects.create(jlpt_level=jlpt_level)
+
+        # Create all the pairs for this exercise
+        for pair_data in pairs_data:
+            kanji = pair_data.get('kanji', '')
+            answer = pair_data.get('answer', '')
+
+            if not kanji or not answer:
+                exercise_match.delete()
+                return Response(
+                    {'detail': 'Each pair must have both kanji and answer'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            ExerciseMatchOptions.objects.create(
+                exercise_match=exercise_match,
+                kanji=kanji,
+                answer=answer
+            )
+
+        # Return the created exercise with its pairs
+        pairs = ExerciseMatchOptions.objects.filter(exercise_match=exercise_match)
+        return Response({
+            'id': exercise_match.id,
+            'jlpt_level': exercise_match.jlpt_level,
+            'pairs': [{'kanji': pair.kanji, 'answer': pair.answer} for pair in pairs],
+            'pair_count': pairs.count()
+        }, status=status.HTTP_201_CREATED)
 
     def delete(self, request, match_id):
-        """Delete an exercise match and all its options."""
+        """Delete a matching exercise and all its pairs"""
         try:
             match = ExerciseMatch.objects.get(id=match_id)
+            ExerciseMatchOptions.objects.filter(exercise_match=match).delete()
+            match.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
         except ExerciseMatch.DoesNotExist:
-            return Response({'detail': 'Match not found'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'detail': 'Exercise not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Delete options first to maintain referential integrity
-        ExerciseMatchOptions.objects.filter(exercise_match=match).delete()
-
-        # Delete the match
-        match.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
 
 # 1. GET /api/groups/ → User's groups (joined or owned)
 class MyGroupsView(generics.ListAPIView):
@@ -357,51 +388,51 @@ class GroupDetailView(APIView):
         })
 
 
-class ExerciseMatchOptionsListCreateView(APIView):
-    def get(self, request):
-        """Get all exercise match options."""
-        options = ExerciseMatchOptions.objects.all()
-        serializer = ExerciseMatchOptionsSerializer(options, many=True)
-        return Response(serializer.data)
-
-    def post(self, request):
-        """Create a new exercise match option with duplicate checking."""
-        # Extract data
-        exercise_match_id = request.data.get('exercise_match')
-        kanji = request.data.get('kanji', '')
-        answer = request.data.get('answer', '')
-
-        if not all([exercise_match_id, kanji, answer]):
-            return Response(
-                {'detail': 'exercise_match, kanji, and answer are all required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Check for duplicate in either direction (kanji→answer or answer→kanji)
-        normalized_answer = answer.lower()
-        normalized_kanji = kanji.lower()
-
-        existing_option = ExerciseMatchOptions.objects.filter(
-            # Check if this exact pair already exists
-            Q(kanji__iexact=kanji, answer__iexact=answer) |
-            # Or if the reverse mapping exists (answer→kanji)
-            Q(kanji__iexact=answer, answer__iexact=kanji)
-        ).first()
-
-        if existing_option:
-            return Response(
-                {'detail': f'A matching pair with kanji "{kanji}" and meaning "{answer}" already exists'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # If no duplicate found, create the new option
-        serializer = ExerciseMatchOptionsSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    # Updated view with better error handling and debugging
+# class ExerciseMatchOptionsListCreateView(APIView):
+#     def get(self, request):
+#         """Get all exercise match options."""
+#         options = ExerciseMatchOptions.objects.all()
+#         serializer = ExerciseMatchOptionsSerializer(options, many=True)
+#         return Response(serializer.data)
+#
+#     def post(self, request):
+#         """Create a new exercise match option with duplicate checking."""
+#         # Extract data
+#         exercise_match_id = request.data.get('exercise_match')
+#         kanji = request.data.get('kanji', '')
+#         answer = request.data.get('answer', '')
+#
+#         if not all([exercise_match_id, kanji, answer]):
+#             return Response(
+#                 {'detail': 'exercise_match, kanji, and answer are all required'},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
+#
+#         # Check for duplicate in either direction (kanji→answer or answer→kanji)
+#         normalized_answer = answer.lower()
+#         normalized_kanji = kanji.lower()
+#
+#         existing_option = ExerciseMatchOptions.objects.filter(
+#             # Check if this exact pair already exists
+#             Q(kanji__iexact=kanji, answer__iexact=answer) |
+#             # Or if the reverse mapping exists (answer→kanji)
+#             Q(kanji__iexact=answer, answer__iexact=kanji)
+#         ).first()
+#
+#         if existing_option:
+#             return Response(
+#                 {'detail': f'A matching pair with kanji "{kanji}" and meaning "{answer}" already exists'},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
+#
+#         # If no duplicate found, create the new option
+#         serializer = ExerciseMatchOptionsSerializer(data=request.data)
+#         if serializer.is_valid():
+#             serializer.save()
+#             return Response(serializer.data, status=status.HTTP_201_CREATED)
+#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+#
+#     # Updated view with better error handling and debugging
 
 
 class ExerciseMultiChoiceView(APIView):
@@ -644,3 +675,293 @@ class ExerciseFreetextDetailView(APIView):
         exercise = self.get_object(pk)
         exercise.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# LESSON VIEWS
+class LessonListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return LessonCreateSerializer
+        return LessonSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_teacher:
+            # Teachers see all lessons (or just their own - adjust as needed)
+            return Lesson.objects.all().select_related('teacher')
+        else:
+            # Students see all lessons
+            return Lesson.objects.all().select_related('teacher')
+
+    def perform_create(self, serializer):
+        if not self.request.user.is_teacher:
+            raise PermissionDenied("Only teachers can create lessons.")
+        serializer.save(teacher=self.request.user)
+
+
+class LessonDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = LessonDetailSerializer
+
+    def get_queryset(self):
+        return Lesson.objects.all().select_related('teacher')
+
+    def perform_update(self, serializer):
+        if not self.request.user.is_teacher:
+            raise PermissionDenied("Only teachers can update lessons.")
+
+        lesson = self.get_object()
+        if lesson.teacher != self.request.user:
+            raise PermissionDenied("You can only update your own lessons.")
+
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self.request.user.is_teacher:
+            raise PermissionDenied("Only teachers can delete lessons.")
+
+        if instance.teacher != self.request.user:
+            raise PermissionDenied("You can only delete your own lessons.")
+
+        instance.delete()
+
+
+class LessonExercisesView(APIView):
+    """Manage exercises within a lesson"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, lesson_id):
+        """Get all exercises for a lesson"""
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        lesson_exercises = LessonsExercises.objects.filter(lesson=lesson)
+        serializer = LessonsExercisesSerializer(lesson_exercises, many=True)
+        return Response(serializer.data)
+
+    def post(self, request, lesson_id):
+        """Add exercises to a lesson"""
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can add exercises to lessons."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+
+        if lesson.teacher != request.user:
+            return Response({"detail": "You can only modify your own lessons."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        exercises_data = request.data
+        if not isinstance(exercises_data, list):
+            return Response({"detail": "Expected a list of exercises."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        created_exercises = []
+        for exercise_data in exercises_data:
+            lesson_exercise = LessonsExercises.objects.create(
+                lesson=lesson,
+                exercise_id=exercise_data['exercise_id'],
+                exercise_type=exercise_data['exercise_type']
+            )
+            created_exercises.append(lesson_exercise)
+
+        # Update lesson exercise count
+        lesson.exercise_count = LessonsExercises.objects.filter(lesson=lesson).count()
+        lesson.save()
+
+        serializer = LessonsExercisesSerializer(created_exercises, many=True)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, lesson_id, exercise_id=None):
+        """Remove an exercise from a lesson"""
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can remove exercises from lessons."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+
+        if lesson.teacher != request.user:
+            return Response({"detail": "You can only modify your own lessons."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        if exercise_id:
+            lesson_exercise = get_object_or_404(LessonsExercises,
+                                                lesson=lesson,
+                                                id=exercise_id)
+            lesson_exercise.delete()
+
+        # Update lesson exercise count
+        lesson.exercise_count = LessonsExercises.objects.filter(lesson=lesson).count()
+        lesson.save()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AllExercisesView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        # Fetch all exercise types
+        freetext_exercises = ExerciseFreetext.objects.all()
+        multichoice_exercises = ExerciseMultiChoice.objects.all()
+        match_exercises = ExerciseMatch.objects.all()
+
+        # Format freetext exercises
+        freetext_data = []
+        for exercise in freetext_exercises:
+            freetext_data.append({
+                'id': exercise.id,
+                'type': 'freetext',
+                'question': exercise.question,
+                'answer': exercise.answer,
+                'jlpt_level': exercise.jlpt_level
+            })
+
+        # Format multi-choice exercises
+        multichoice_data = []
+        for exercise in multichoice_exercises:
+            options = ExerciseMultiChoiceOptions.objects.filter(exercise_mc=exercise)
+            multichoice_data.append({
+                'id': exercise.id,
+                'type': 'multi-choice',
+                'question': exercise.question,
+                'jlpt_level': exercise.jlpt_level,
+                'options': ExerciseMultiChoiceOptionsSerializer(options, many=True).data
+            })
+
+        # Format pair-match exercises (only those with 2+ pairs)
+        match_data = []
+        for exercise in match_exercises:
+            pairs = ExerciseMatchOptions.objects.filter(exercise_match=exercise)
+            # Only include exercises with 2 or more pairs
+            if pairs.count() >= 2:
+                match_data.append({
+                    'id': exercise.id,
+                    'type': 'pair-match',
+                    'jlpt_level': exercise.jlpt_level,
+                    'pairs': [{'kanji': pair.kanji, 'answer': pair.answer} for pair in pairs],
+                    'pair_count': pairs.count()
+                })
+
+        return Response({
+            'freetext': freetext_data,
+            'multiChoice': multichoice_data,
+            'pairMatch': match_data
+        })
+
+
+class PairLibraryView(APIView):
+    """Manage individual pairs that can be reused in exercises"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """Get all available pairs for selection"""
+        jlpt_level = request.query_params.get('jlpt_level')
+
+        # Get all pairs, excluding those that belong to single-pair exercises
+        # We'll identify library pairs vs exercise pairs by checking if the exercise has only 1 pair
+        pairs = ExerciseMatchOptions.objects.select_related('exercise_match').all()
+
+        if jlpt_level:
+            pairs = pairs.filter(exercise_match__jlpt_level=jlpt_level)
+
+        # Format pairs - include both library pairs and pairs from multi-pair exercises
+        pair_data = []
+        for pair in pairs:
+            # Count how many pairs are in this exercise
+            exercise_pair_count = ExerciseMatchOptions.objects.filter(
+                exercise_match=pair.exercise_match
+            ).count()
+
+            pair_data.append({
+                'id': pair.id,
+                'kanji': pair.kanji,
+                'answer': pair.answer,
+                'jlpt_level': pair.exercise_match.jlpt_level,
+                'exercise_id': pair.exercise_match.id,
+                'is_library_pair': exercise_pair_count == 1,  # True if it's a single-pair "library" exercise
+                'exercise_pair_count': exercise_pair_count
+            })
+
+        return Response(pair_data)
+
+    def post(self, request):
+        """Create individual pairs for the library"""
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can create pairs"},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        kanji = request.data.get('kanji')
+        answer = request.data.get('answer')
+        jlpt_level = request.data.get('jlpt_level', 5)
+
+        if not kanji or not answer:
+            return Response({"detail": "Kanji and answer are required"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Check for exact duplicates
+        if ExerciseMatchOptions.objects.filter(kanji__iexact=kanji, answer__iexact=answer).exists():
+            return Response({"detail": "This pair already exists"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Create a temporary exercise to hold this pair
+        # Mark it as a library pair by giving it a special flag or naming
+        temp_exercise = ExerciseMatch.objects.create(jlpt_level=jlpt_level)
+
+        pair = ExerciseMatchOptions.objects.create(
+            exercise_match=temp_exercise,
+            kanji=kanji,
+            answer=answer
+        )
+
+        return Response({
+            'id': pair.id,
+            'kanji': pair.kanji,
+            'answer': pair.answer,
+            'jlpt_level': jlpt_level,
+            'is_library_pair': True
+        }, status=status.HTTP_201_CREATED)
+
+
+class CreateExerciseFromPairsView(APIView):
+    """Create an exercise by selecting existing pairs"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can create exercises"},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        pair_ids = request.data.get('pair_ids', [])
+        jlpt_level = request.data.get('jlpt_level')
+
+        if len(pair_ids) < 2:
+            return Response({"detail": "At least 2 pairs are required"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Get the selected pairs
+        selected_pairs = ExerciseMatchOptions.objects.filter(id__in=pair_ids)
+
+        if selected_pairs.count() != len(pair_ids):
+            return Response({"detail": "Some pairs not found"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Create new exercise
+        new_exercise = ExerciseMatch.objects.create(jlpt_level=jlpt_level)
+
+        # Copy selected pairs to the new exercise
+        for pair in selected_pairs:
+            ExerciseMatchOptions.objects.create(
+                exercise_match=new_exercise,
+                kanji=pair.kanji,
+                answer=pair.answer
+            )
+
+        # Return the new exercise
+        new_pairs = ExerciseMatchOptions.objects.filter(exercise_match=new_exercise)
+        return Response({
+            'id': new_exercise.id,
+            'jlpt_level': new_exercise.jlpt_level,
+            'pairs': [{'kanji': p.kanji, 'answer': p.answer} for p in new_pairs],
+            'pair_count': new_pairs.count()
+        }, status=status.HTTP_201_CREATED)
