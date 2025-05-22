@@ -1,7 +1,7 @@
 from django.shortcuts import render, get_object_or_404
 from django.contrib.auth import login
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Q, Count
 
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -78,7 +78,7 @@ class LoginView(APIView):
 # EXERCISE VIEWS
 class ExerciseMatchListCreateView(APIView):
     def get(self, request):
-        """Get all matching exercises with their pairs - exclude single-pair library exercises"""
+        """Get all matching exercises with their pairs - only real exercises with 2+ pairs"""
         matches = ExerciseMatch.objects.all()
         result = []
 
@@ -87,7 +87,7 @@ class ExerciseMatchListCreateView(APIView):
             pairs = ExerciseMatchOptions.objects.filter(exercise_match=match)
             pair_count = pairs.count()
 
-            # Only include exercises with 2 or more pairs (real exercises, not library pairs)
+            # Only include exercises with 2 or more pairs (real exercises, not single library pairs)
             if pair_count >= 2:
                 match_data = {
                     'id': match.id,
@@ -804,7 +804,11 @@ class AllExercisesView(APIView):
         # Fetch all exercise types
         freetext_exercises = ExerciseFreetext.objects.all()
         multichoice_exercises = ExerciseMultiChoice.objects.all()
-        match_exercises = ExerciseMatch.objects.all()
+
+        # Only get match exercises with 2+ pairs (real exercises, not library pairs)
+        match_exercises = ExerciseMatch.objects.annotate(
+            pair_count=Count('exercisematchoptions')
+        ).filter(pair_count__gte=2)
 
         # Format freetext exercises
         freetext_data = []
@@ -829,19 +833,21 @@ class AllExercisesView(APIView):
                 'options': ExerciseMultiChoiceOptionsSerializer(options, many=True).data
             })
 
-        # Format pair-match exercises (only those with 2+ pairs)
+        # Format pair-match exercises
         match_data = []
         for exercise in match_exercises:
             pairs = ExerciseMatchOptions.objects.filter(exercise_match=exercise)
-            # Only include exercises with 2 or more pairs
-            if pairs.count() >= 2:
-                match_data.append({
-                    'id': exercise.id,
-                    'type': 'pair-match',
-                    'jlpt_level': exercise.jlpt_level,
-                    'pairs': [{'kanji': pair.kanji, 'answer': pair.answer} for pair in pairs],
-                    'pair_count': pairs.count()
-                })
+            # Get first pair for display purposes, but include all pairs
+            first_pair = pairs.first()
+            match_data.append({
+                'id': exercise.id,
+                'type': 'pair-match',
+                'jlpt_level': exercise.jlpt_level,
+                'kanji': first_pair.kanji if first_pair else '',
+                'answer': first_pair.answer if first_pair else '',
+                'pairs': [{'kanji': pair.kanji, 'answer': pair.answer} for pair in pairs],
+                'pair_count': pairs.count()
+            })
 
         return Response({
             'freetext': freetext_data,
@@ -855,32 +861,30 @@ class PairLibraryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """Get all available pairs for selection"""
+        """Get all available pairs - separate library pairs from exercise pairs"""
         jlpt_level = request.query_params.get('jlpt_level')
 
-        # Get all pairs, excluding those that belong to single-pair exercises
-        # We'll identify library pairs vs exercise pairs by checking if the exercise has only 1 pair
-        pairs = ExerciseMatchOptions.objects.select_related('exercise_match').all()
+        # Get exercises that have only 1 pair (these are library pairs)
+        library_exercises = ExerciseMatch.objects.annotate(
+            pair_count=Count('exercisematchoptions')
+        ).filter(pair_count=1)
 
-        if jlpt_level:
-            pairs = pairs.filter(exercise_match__jlpt_level=jlpt_level)
+        pairs_query = ExerciseMatchOptions.objects.filter(exercise_match__in=library_exercises)
 
-        # Format pairs - include both library pairs and pairs from multi-pair exercises
+        if jlpt_level and jlpt_level != 'all':
+            pairs_query = pairs_query.filter(exercise_match__jlpt_level=jlpt_level)
+
+        pairs = pairs_query.select_related('exercise_match')
+
         pair_data = []
         for pair in pairs:
-            # Count how many pairs are in this exercise
-            exercise_pair_count = ExerciseMatchOptions.objects.filter(
-                exercise_match=pair.exercise_match
-            ).count()
-
             pair_data.append({
                 'id': pair.id,
                 'kanji': pair.kanji,
                 'answer': pair.answer,
                 'jlpt_level': pair.exercise_match.jlpt_level,
                 'exercise_id': pair.exercise_match.id,
-                'is_library_pair': exercise_pair_count == 1,  # True if it's a single-pair "library" exercise
-                'exercise_pair_count': exercise_pair_count
+                'can_reuse': True
             })
 
         return Response(pair_data)
@@ -899,13 +903,20 @@ class PairLibraryView(APIView):
             return Response({"detail": "Kanji and answer are required"},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Check for exact duplicates
-        if ExerciseMatchOptions.objects.filter(kanji__iexact=kanji, answer__iexact=answer).exists():
-            return Response({"detail": "This pair already exists"},
+        # Check for exact duplicates in library pairs only
+        library_exercises = ExerciseMatch.objects.annotate(
+            pair_count=Count('exercisematchoptions')
+        ).filter(pair_count=1)
+
+        if ExerciseMatchOptions.objects.filter(
+                exercise_match__in=library_exercises,
+                kanji__iexact=kanji,
+                answer__iexact=answer
+        ).exists():
+            return Response({"detail": "This pair already exists in the library"},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Create a temporary exercise to hold this pair
-        # Mark it as a library pair by giving it a special flag or naming
+        # Create a single-pair exercise to hold this library pair
         temp_exercise = ExerciseMatch.objects.create(jlpt_level=jlpt_level)
 
         pair = ExerciseMatchOptions.objects.create(
@@ -919,7 +930,8 @@ class PairLibraryView(APIView):
             'kanji': pair.kanji,
             'answer': pair.answer,
             'jlpt_level': jlpt_level,
-            'is_library_pair': True
+            'exercise_id': temp_exercise.id,
+            'can_reuse': True
         }, status=status.HTTP_201_CREATED)
 
 
@@ -949,7 +961,8 @@ class CreateExerciseFromPairsView(APIView):
         # Create new exercise
         new_exercise = ExerciseMatch.objects.create(jlpt_level=jlpt_level)
 
-        # Copy selected pairs to the new exercise
+        # COPY (don't move) selected pairs to the new exercise
+        # This ensures library pairs remain available for reuse
         for pair in selected_pairs:
             ExerciseMatchOptions.objects.create(
                 exercise_match=new_exercise,

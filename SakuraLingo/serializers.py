@@ -214,13 +214,13 @@ class LessonDetailSerializer(serializers.ModelSerializer):
                     })
                 elif le.exercise_type == 'pair-match':
                     exercise = ExerciseMatch.objects.get(id=le.exercise_id)
-                    option = ExerciseMatchOptions.objects.filter(exercise_match=exercise).first()
-                    if option:
-                        exercise_data.update({
-                            'kanji': option.kanji,
-                            'answer': option.answer,
-                            'jlpt_level': exercise.jlpt_level
-                        })
+                    # Get ALL pairs for this exercise, not just the first one
+                    pairs = ExerciseMatchOptions.objects.filter(exercise_match=exercise)
+                    exercise_data.update({
+                        'jlpt_level': exercise.jlpt_level,
+                        'pairs': [{'kanji': pair.kanji, 'answer': pair.answer} for pair in pairs],  # ✅ All pairs
+                        'pair_count': pairs.count()
+                    })
             except Exception as e:
                 # Exercise might be deleted, skip it
                 continue
