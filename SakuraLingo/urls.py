@@ -26,14 +26,22 @@ urlpatterns = [
     path('freetext-review/<int:submission_id>/', TeacherReviewSubmissionView.as_view(), name='freetext-review'),
     path('freetext-pending/', PendingSubmissionsView.as_view(), name='freetext-pending'),
 
+    path('exercises/all/', AllExercisesView.as_view(), name='all-exercises'),
+
     path('lessons/', LessonListCreateView.as_view(), name='lesson-list-create'),
     path('lessons/<int:pk>/', LessonDetailView.as_view(), name='lesson-detail'),
     path('lessons/<int:lesson_id>/exercises/', LessonExercisesView.as_view(), name='lesson-exercises'),
     path('lessons/<int:lesson_id>/exercises/<int:exercise_id>/', LessonExercisesView.as_view(),
          name='lesson-exercise-detail'),
 
-    # All exercises endpoint for lesson creation
-    path('exercises/all/', AllExercisesView.as_view(), name='all-exercises'),
+
+    path('homework/assign/', HomeworkAssignView.as_view(), name='homework-assign'),
+    path('homework/teacher/', TeacherHomeworkView.as_view(), name='teacher-homework'),
+    path('homework/student/', StudentHomeworkView.as_view(), name='student-homework'),
+    path('homework/<int:homework_id>/overview/', HomeworkOverviewView.as_view(), name='homework-overview'),
+    path('homework/<int:homework_id>/submit/', HomeworkSubmitView.as_view(), name='homework-submit'),
+    path('homework/<int:homework_id>/result/', HomeworkResultView.as_view(), name='homework-result'),
+    path('homework/<int:homework_id>/', HomeworkDeleteView.as_view(), name='homework-delete'),
 
     path('groups/', MyGroupsView.as_view(), name='my-groups'),
     path('groups/search/', SearchGroupsView.as_view(), name='search-groups'),

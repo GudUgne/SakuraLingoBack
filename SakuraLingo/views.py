@@ -1,7 +1,7 @@
 from django.shortcuts import render, get_object_or_404
 from django.contrib.auth import login
 from django.utils import timezone
-from django.db.models import Q, Count
+from django.db.models import Q, Count, Avg
 
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -10,11 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import (
-    ExerciseMatch, Group, GroupsStudents, User, Chat, ExerciseMatchOptions,
-    ExerciseMultiChoiceOptions, ExerciseMultiChoice, ExerciseFreetext,
-    Lesson, LessonsExercises
-)
+from .models import *
 
 from .serializers import UserUpdateSerializer, UserSimpleSerializer, LoginSerializer, RegisterSerializer, \
     ExerciseMatchSerializer, GroupSerializer, GroupsStudentsSerializer, ChatSerializer, ExerciseMatchOptionsSerializer, \
@@ -990,3 +986,360 @@ class RemoveStudentFromGroupView(APIView):
         except GroupsStudents.DoesNotExist:
             return Response({"detail": "Student not found in this group"},
                             status=status.HTTP_404_NOT_FOUND)
+
+class HomeworkAssignView(APIView):
+    """Assign homework to a group (teachers only)"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can assign homework"},
+                          status=status.HTTP_403_FORBIDDEN)
+
+        lesson_id = request.data.get('lesson_id')
+        group_id = request.data.get('group_id')
+        start_date = request.data.get('start_date')
+        end_date = request.data.get('end_date')
+
+        # Validate required fields
+        if not all([lesson_id, group_id, start_date, end_date]):
+            return Response({"detail": "All fields are required"},
+                          status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            lesson = Lesson.objects.get(id=lesson_id)
+            group = Group.objects.get(id=group_id, teacher=request.user)
+        except Lesson.DoesNotExist:
+            return Response({"detail": "Lesson not found"},
+                          status=status.HTTP_404_NOT_FOUND)
+        except Group.DoesNotExist:
+            return Response({"detail": "Group not found or you don't have permission"},
+                          status=status.HTTP_404_NOT_FOUND)
+
+        # Parse dates
+        try:
+            start_datetime = timezone.datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            end_datetime = timezone.datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+        except ValueError:
+            return Response({"detail": "Invalid date format"},
+                          status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate date range
+        if end_datetime <= start_datetime:
+            return Response({"detail": "End date must be after start date"},
+                          status=status.HTTP_400_BAD_REQUEST)
+
+        # Check for duplicate homework
+        if Homework.objects.filter(lesson=lesson, group=group).exists():
+            return Response({"detail": "This lesson is already assigned to this group"},
+                          status=status.HTTP_400_BAD_REQUEST)
+
+        # Create homework
+        homework = Homework.objects.create(
+            lesson=lesson,
+            teacher=request.user,
+            group=group,
+            start_date=start_datetime,
+            end_date=end_datetime
+        )
+
+        # Serialize and return
+        homework_data = {
+            'id': homework.id,
+            'lesson': {
+                'id': lesson.id,
+                'name': lesson.name,
+                'lesson_type': lesson.lesson_type,
+                'jlpt_level': lesson.jlpt_level,
+                'exercise_count': lesson.exercise_count
+            },
+            'teacher': {
+                'id': request.user.id,
+                'username': request.user.username,
+                'first_name': request.user.first_name,
+                'last_name': request.user.last_name
+            },
+            'group': {
+                'id': group.id,
+                'name': group.name
+            },
+            'start_date': homework.start_date.isoformat(),
+            'end_date': homework.end_date.isoformat()
+        }
+
+        return Response(homework_data, status=status.HTTP_201_CREATED)
+
+class TeacherHomeworkView(APIView):
+    """Get all homework assigned by the teacher"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can view assigned homework"},
+                          status=status.HTTP_403_FORBIDDEN)
+
+        homework_list = Homework.objects.filter(teacher=request.user).select_related(
+            'lesson', 'group', 'teacher'
+        ).order_by('-start_date')
+
+        homework_data = []
+        for homework in homework_list:
+            homework_data.append({
+                'id': homework.id,
+                'lesson': {
+                    'id': homework.lesson.id,
+                    'name': homework.lesson.name,
+                    'lesson_type': homework.lesson.lesson_type,
+                    'jlpt_level': homework.lesson.jlpt_level,
+                    'exercise_count': homework.lesson.exercise_count
+                },
+                'teacher': {
+                    'id': homework.teacher.id,
+                    'username': homework.teacher.username,
+                    'first_name': homework.teacher.first_name,
+                    'last_name': homework.teacher.last_name
+                },
+                'group': {
+                    'id': homework.group.id,
+                    'name': homework.group.name
+                },
+                'start_date': homework.start_date.isoformat(),
+                'end_date': homework.end_date.isoformat()
+            })
+
+        return Response(homework_data)
+
+
+class StudentHomeworkView(APIView):
+    """Get all homework assigned to the student"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if request.user.is_teacher:
+            return Response({"detail": "Teachers should use the teacher homework endpoint"},
+                          status=status.HTTP_403_FORBIDDEN)
+
+        # Get groups the student belongs to
+        student_groups = GroupsStudents.objects.filter(
+            student=request.user,
+            verification_status=True
+        ).values_list('group_id', flat=True)
+
+        homework_list = Homework.objects.filter(
+            group_id__in=student_groups
+        ).select_related('lesson', 'group', 'teacher').order_by('-start_date')
+
+        homework_data = []
+        for homework in homework_list:
+            homework_data.append({
+                'id': homework.id,
+                'lesson': {
+                    'id': homework.lesson.id,
+                    'name': homework.lesson.name,
+                    'lesson_type': homework.lesson.lesson_type,
+                    'jlpt_level': homework.lesson.jlpt_level,
+                    'exercise_count': homework.lesson.exercise_count
+                },
+                'teacher': {
+                    'id': homework.teacher.id,
+                    'username': homework.teacher.username,
+                    'first_name': homework.teacher.first_name,
+                    'last_name': homework.teacher.last_name
+                },
+                'group': {
+                    'id': homework.group.id,
+                    'name': homework.group.name
+                },
+                'start_date': homework.start_date.isoformat(),
+                'end_date': homework.end_date.isoformat()
+            })
+
+        return Response(homework_data)
+
+
+class HomeworkOverviewView(APIView):
+    """Get detailed overview of homework completion and results"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, homework_id):
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can view homework overview"},
+                          status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            homework = Homework.objects.select_related(
+                'lesson', 'group', 'teacher'
+            ).get(id=homework_id, teacher=request.user)
+        except Homework.DoesNotExist:
+            return Response({"detail": "Homework not found"},
+                          status=status.HTTP_404_NOT_FOUND)
+
+        # Get all students in the group
+        total_students = GroupsStudents.objects.filter(
+            group=homework.group,
+            verification_status=True
+        ).count()
+
+        # Get homework results
+        results = HomeworkResult.objects.filter(homework=homework).select_related('student')
+        completed_count = results.count()
+
+        # Calculate statistics
+        completion_rate = (completed_count / total_students * 100) if total_students > 0 else 0
+        average_score = results.aggregate(avg_score=Avg('score'))['avg_score'] or 0
+
+        # Serialize results
+        results_data = []
+        for result in results:
+            results_data.append({
+                'id': result.id,
+                'homework': homework.id,
+                'student': {
+                    'id': result.student.id,
+                    'username': result.student.username,
+                    'first_name': result.student.first_name,
+                    'last_name': result.student.last_name
+                },
+                'score': result.score,
+                'completed_date': result.submission_date.isoformat() if hasattr(result, 'submission_date') else None
+            })
+
+        overview_data = {
+            'homework': {
+                'id': homework.id,
+                'lesson': {
+                    'id': homework.lesson.id,
+                    'name': homework.lesson.name,
+                    'lesson_type': homework.lesson.lesson_type,
+                    'jlpt_level': homework.lesson.jlpt_level,
+                    'exercise_count': homework.lesson.exercise_count
+                },
+                'teacher': {
+                    'id': homework.teacher.id,
+                    'username': homework.teacher.username,
+                    'first_name': homework.teacher.first_name,
+                    'last_name': homework.teacher.last_name
+                },
+                'group': {
+                    'id': homework.group.id,
+                    'name': homework.group.name
+                },
+                'start_date': homework.start_date.isoformat(),
+                'end_date': homework.end_date.isoformat()
+            },
+            'total_students': total_students,
+            'completed_count': completed_count,
+            'completion_rate': round(completion_rate, 1),
+            'average_score': round(average_score, 1),
+            'results': results_data
+        }
+
+        return Response(overview_data)
+
+
+class HomeworkSubmitView(APIView):
+    """Submit homework result (students only)"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, homework_id):
+        if request.user.is_teacher:
+            return Response({"detail": "Teachers cannot submit homework"},
+                          status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            homework = Homework.objects.get(id=homework_id)
+        except Homework.DoesNotExist:
+            return Response({"detail": "Homework not found"},
+                          status=status.HTTP_404_NOT_FOUND)
+
+        # Check if student is in the group
+        if not GroupsStudents.objects.filter(
+            group=homework.group,
+            student=request.user,
+            verification_status=True
+        ).exists():
+            return Response({"detail": "You are not enrolled in this group"},
+                          status=status.HTTP_403_FORBIDDEN)
+
+        # Check if already submitted
+        if HomeworkResult.objects.filter(homework=homework, student=request.user).exists():
+            return Response({"detail": "You have already submitted this homework"},
+                          status=status.HTTP_400_BAD_REQUEST)
+
+        score = request.data.get('score')
+        if score is None or not (0 <= score <= 100):
+            return Response({"detail": "Valid score (0-100) is required"},
+                          status=status.HTTP_400_BAD_REQUEST)
+
+        # Create homework result
+        result = HomeworkResult.objects.create(
+            homework=homework,
+            student=request.user,
+            score=score
+        )
+
+        result_data = {
+            'id': result.id,
+            'homework': homework.id,
+            'student': {
+                'id': request.user.id,
+                'username': request.user.username,
+                'first_name': request.user.first_name,
+                'last_name': request.user.last_name
+            },
+            'score': result.score
+        }
+
+        return Response(result_data, status=status.HTTP_201_CREATED)
+
+
+class HomeworkResultView(APIView):
+    """Get homework result for a specific homework (students only)"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, homework_id):
+        if request.user.is_teacher:
+            return Response({"detail": "Teachers should use the overview endpoint"},
+                          status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            result = HomeworkResult.objects.select_related('student').get(
+                homework_id=homework_id,
+                student=request.user
+            )
+        except HomeworkResult.DoesNotExist:
+            return Response({"detail": "No result found for this homework"},
+                          status=status.HTTP_404_NOT_FOUND)
+
+        result_data = {
+            'id': result.id,
+            'homework': result.homework.id,
+            'student': {
+                'id': result.student.id,
+                'username': result.student.username,
+                'first_name': result.student.first_name,
+                'last_name': result.student.last_name
+            },
+            'score': result.score
+        }
+
+        return Response(result_data)
+
+
+class HomeworkDeleteView(APIView):
+    """Delete homework (teachers only)"""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, homework_id):
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can delete homework"},
+                          status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            homework = Homework.objects.get(id=homework_id, teacher=request.user)
+        except Homework.DoesNotExist:
+            return Response({"detail": "Homework not found"},
+                          status=status.HTTP_404_NOT_FOUND)
+
+        homework.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
