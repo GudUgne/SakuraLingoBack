@@ -220,10 +220,27 @@ class PendingRequestsView(APIView):
         teacher_groups = Group.objects.filter(teacher=request.user)
         requests = GroupsStudents.objects.filter(
             group__in=teacher_groups, verification_status=False
-        )
-        serializer = GroupsStudentsSerializer(requests, many=True)
-        return Response(serializer.data)
+        ).select_related('student', 'group')
 
+        # Custom serialization to include proper student names
+        requests_data = []
+        for req in requests:
+            requests_data.append({
+                'id': req.id,
+                'student': {
+                    'id': req.student.id,
+                    'username': req.student.username,
+                    'first_name': req.student.first_name,
+                    'last_name': req.student.last_name,
+                },
+                'group': {
+                    'id': req.group.id,
+                    'name': req.group.name,
+                },
+                'verification_status': req.verification_status
+            })
+
+        return Response(requests_data)
 
 # 5. POST /api/groups/<group_id>/approve/<student_id>/ → Approve student (teachers only)
 class ApproveRequestView(APIView):
@@ -367,72 +384,44 @@ class GroupDetailView(APIView):
     def get(self, request, group_id):
         group = get_object_or_404(Group, id=group_id)
 
-        # (keep your existing permission checks here…)
+        # Check if user has access to this group
+        user = request.user
+        has_access = False
 
-        # fetch ALL join‐records, regardless of status
+        if user.is_teacher and group.teacher == user:
+            has_access = True
+        elif not user.is_teacher:
+            # Student can access if they're a member (approved or pending)
+            has_access = GroupsStudents.objects.filter(
+                group=group,
+                student=user
+            ).exists()
+
+        if not has_access:
+            return Response(
+                {"detail": "You don't have permission to access this group"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Fetch ALL join records, regardless of status
         rels = GroupsStudents.objects.filter(group=group).select_related('student')
 
         students = []
         for rel in rels:
             students.append({
-                "id":                 rel.student.id,
-                "first_name":         rel.student.first_name,
-                "last_name":          rel.student.last_name,
-                "verification_status": rel.verification_status,  # include the flag
+                "id": rel.student.id,
+                "first_name": rel.student.first_name,
+                "last_name": rel.student.last_name,
+                "username": rel.student.username,
+                "verification_status": rel.verification_status,
             })
 
         return Response({
-            "id":       group.id,
-            "name":     group.name,
+            "id": group.id,
+            "name": group.name,
             "students": students
         })
 
-
-# class ExerciseMatchOptionsListCreateView(APIView):
-#     def get(self, request):
-#         """Get all exercise match options."""
-#         options = ExerciseMatchOptions.objects.all()
-#         serializer = ExerciseMatchOptionsSerializer(options, many=True)
-#         return Response(serializer.data)
-#
-#     def post(self, request):
-#         """Create a new exercise match option with duplicate checking."""
-#         # Extract data
-#         exercise_match_id = request.data.get('exercise_match')
-#         kanji = request.data.get('kanji', '')
-#         answer = request.data.get('answer', '')
-#
-#         if not all([exercise_match_id, kanji, answer]):
-#             return Response(
-#                 {'detail': 'exercise_match, kanji, and answer are all required'},
-#                 status=status.HTTP_400_BAD_REQUEST
-#             )
-#
-#         # Check for duplicate in either direction (kanji→answer or answer→kanji)
-#         normalized_answer = answer.lower()
-#         normalized_kanji = kanji.lower()
-#
-#         existing_option = ExerciseMatchOptions.objects.filter(
-#             # Check if this exact pair already exists
-#             Q(kanji__iexact=kanji, answer__iexact=answer) |
-#             # Or if the reverse mapping exists (answer→kanji)
-#             Q(kanji__iexact=answer, answer__iexact=kanji)
-#         ).first()
-#
-#         if existing_option:
-#             return Response(
-#                 {'detail': f'A matching pair with kanji "{kanji}" and meaning "{answer}" already exists'},
-#                 status=status.HTTP_400_BAD_REQUEST
-#             )
-#
-#         # If no duplicate found, create the new option
-#         serializer = ExerciseMatchOptionsSerializer(data=request.data)
-#         if serializer.is_valid():
-#             serializer.save()
-#             return Response(serializer.data, status=status.HTTP_201_CREATED)
-#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-#
-#     # Updated view with better error handling and debugging
 
 
 class ExerciseMultiChoiceView(APIView):
@@ -978,3 +967,26 @@ class CreateExerciseFromPairsView(APIView):
             'pairs': [{'kanji': p.kanji, 'answer': p.answer} for p in new_pairs],
             'pair_count': new_pairs.count()
         }, status=status.HTTP_201_CREATED)
+
+
+class RemoveStudentFromGroupView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, group_id, student_id):
+        """Remove a student from a group (teachers only)"""
+        if not request.user.is_teacher:
+            return Response({"detail": "Only teachers can remove students from groups"},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        # Get the group and verify the teacher owns it
+        group = get_object_or_404(Group, id=group_id, teacher=request.user)
+
+        # Find and remove the student from the group
+        try:
+            group_student = GroupsStudents.objects.get(group=group, student_id=student_id)
+            group_student.delete()
+            return Response({"detail": "Student removed from group successfully"},
+                            status=status.HTTP_200_OK)
+        except GroupsStudents.DoesNotExist:
+            return Response({"detail": "Student not found in this group"},
+                            status=status.HTTP_404_NOT_FOUND)

@@ -1,20 +1,5 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-# from .views import (
-#     RegisterView,
-#     LoginView,
-#     ExerciseMatchListCreateView,
-#     MyGroupsView,
-#     CreateGroupView,
-#     RequestToJoinGroup,
-#     PendingRequestsView,
-#     ApproveRequestView, CurrentUserView, MyPendingRequestsView,
-# SendMessageView, GetConversationView, UserListView, SearchGroupsView, CancelRequestView, GroupDetailView,
-#     ExerciseMatchOptionsListCreateView,ExerciseMultiChoiceView,
-#     ExerciseFreetextListCreateView, TeacherReviewSubmissionView, PendingSubmissionsView,
-# ExerciseFreetextDetailView,
-# )
-
 from .views import *
 router = DefaultRouter()
 
@@ -67,6 +52,7 @@ urlpatterns = [
       CancelRequestView.as_view(),
       name='cancel-request'
     ),
+    path('groups/<int:group_id>/students/<int:student_id>/', RemoveStudentFromGroupView.as_view(), name='remove-student'),
 
     path('messages/send/',SendMessageView.as_view(), name='send_message'),
     path('messages/conversation/', GetConversationView.as_view(), name='get_conversation'),
