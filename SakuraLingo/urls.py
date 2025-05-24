@@ -23,9 +23,6 @@ urlpatterns = [
     path('exercise-freetext/', ExerciseFreetextListCreateView.as_view(), name='exercise-freetext-list'),
     path('exercise-freetext/<int:pk>/', ExerciseFreetextDetailView.as_view(), name='exercise-freetext-detail'),
 
-    path('freetext-review/<int:submission_id>/', TeacherReviewSubmissionView.as_view(), name='freetext-review'),
-    path('freetext-pending/', PendingSubmissionsView.as_view(), name='freetext-pending'),
-
     path('exercises/all/', AllExercisesView.as_view(), name='all-exercises'),
 
     path('lessons/', LessonListCreateView.as_view(), name='lesson-list-create'),

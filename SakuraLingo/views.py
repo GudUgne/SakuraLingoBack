@@ -11,12 +11,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import *
-
-from .serializers import UserUpdateSerializer, UserSimpleSerializer, LoginSerializer, RegisterSerializer, \
-    ExerciseMatchSerializer, GroupSerializer, GroupsStudentsSerializer, ChatSerializer, ExerciseMatchOptionsSerializer, \
-    ExerciseMultiChoiceSerializer, ExerciseMultiChoiceOptionsSerializer, \
-    ExerciseFreetextSerializer, FreetextSubmissionSerializer, \
-    LessonDetailSerializer, LessonCreateSerializer, LessonsExercisesSerializer, LessonSerializer
+from .serializers import *
 
 # USER - AUTHORISATION VIEWS
 class CurrentUserView(APIView):
@@ -309,13 +304,6 @@ class SendMessageView(APIView):
         if not all([sender_id, receiver_id, message_content]):
             return Response({'error': 'Missing fields'}, status=400)
 
-        # chat = Chat.objects.create(
-        #     sender_id=sender_id,
-        #     receiver_id=receiver_id,
-        #     message_content=message_content,
-        #     time_sent=timezone.now(),
-        #     is_group_message=False  # Only 1-on-1 chat for now
-        # )
         kwargs = dict(
             sender_id=sender_id,
             message_content=message_content,
@@ -338,14 +326,6 @@ class GetConversationView(APIView):
         user1 = request.GET.get('user1')
         user2 = request.GET.get('user2')
         group_id = request.GET.get('group_id')
-
-        # if not all([user1, user2]):
-        #     return Response({'error': 'Missing user ids'}, status=400)
-        #
-        # messages = Chat.objects.filter(
-        #     (Q(sender_id=user1, receiver_id=user2)) |
-        #     (Q(sender_id=user2, receiver_id=user1))
-        # ).order_by('time_sent')
 
         # fetch all messages in a group
         if group_id:
@@ -571,59 +551,6 @@ class ExerciseFreetextViewSet(viewsets.ModelViewSet):
             return ExerciseFreetext.objects.all()
         return ExerciseFreetext.objects.filter(is_published=True)
 
-class FreetextSubmissionViewSet(viewsets.ModelViewSet):
-    serializer_class = FreetextSubmissionSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        user = self.request.user
-        if user.is_teacher:
-            # Teachers can see all submissions
-            return FreetextSubmission.objects.all()
-        # Students can only see their own submissions
-        return FreetextSubmission.objects.filter(student=user)
-
-    def perform_create(self, serializer):
-        serializer.save(student=self.request.user)
-
-
-class TeacherReviewSubmissionView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def patch(self, request, submission_id):
-        # Ensure user is a teacher
-        if not request.user.is_teacher:
-            return Response({"detail": "Only teachers can review submissions"}, status=status.HTTP_403_FORBIDDEN)
-
-        submission = get_object_or_404(FreetextSubmission, id=submission_id)
-        serializer = FreetextSubmissionSerializer(submission, data=request.data, partial=True)
-        if serializer.is_valid():
-            submission = serializer.save(is_reviewed=True)
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-class PendingSubmissionsView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        # Ensure user is a teacher
-        if not request.user.is_teacher:
-            return Response({"detail": "Only teachers can view pending submissions"}, status=status.HTTP_403_FORBIDDEN)
-
-        pending = FreetextSubmission.objects.filter(is_reviewed=False)
-        serializer = FreetextSubmissionSerializer(pending, many=True)
-        return Response(serializer.data)
-
-
-class PendingFreetextSubmissionsView(generics.ListAPIView):
-    serializer_class = FreetextSubmissionSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        if not self.request.user.is_teacher:
-            return FreetextSubmission.objects.none()
-        return FreetextSubmission.objects.filter(is_reviewed=False)
 
 
 class ExerciseFreetextDetailView(APIView):
@@ -946,7 +873,6 @@ class CreateExerciseFromPairsView(APIView):
         # Create new exercise
         new_exercise = ExerciseMatch.objects.create(jlpt_level=jlpt_level)
 
-        # COPY (don't move) selected pairs to the new exercise
         # This ensures library pairs remain available for reuse
         for pair in selected_pairs:
             ExerciseMatchOptions.objects.create(

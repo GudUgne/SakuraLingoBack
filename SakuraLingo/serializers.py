@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from rest_framework import serializers
 from .models import User, ExerciseMatch, ExerciseMatchOptions, Group,\
     GroupsStudents, Chat, ExerciseMultiChoice, ExerciseMultiChoiceOptions, ExerciseFreetext, \
-    FreetextSubmission, Lesson, LessonsExercises
+     Lesson, LessonsExercises
 
 # AUTHORISATION - USER SERIALIZERS
 class UserSimpleSerializer(serializers.ModelSerializer):
@@ -106,17 +106,6 @@ class ExerciseMultiChoiceOptionsSerializer(serializers.ModelSerializer):
         model = ExerciseMultiChoiceOptions
         fields = ['id', 'exercise_mc', 'answer', 'is_correct']
 
-class FreetextSubmissionSerializer(serializers.ModelSerializer):
-    exercise_details = ExerciseFreetextSerializer(source='exercise', read_only=True)
-    student_name = serializers.CharField(source='student.username', read_only=True)
-
-    class Meta:
-        model = FreetextSubmission
-        fields = ['id', 'exercise', 'exercise_details', 'student', 'student_name',
-                  'student_answer', 'submission_date', 'is_reviewed',
-                  'is_correct', 'teacher_feedback']
-        read_only_fields = ['submission_date']
-
 
 # GROUP SERIALIZERS
 class GroupSerializer(serializers.ModelSerializer):
@@ -141,23 +130,6 @@ class ChatSerializer(serializers.ModelSerializer):
         model = Chat
         fields = '__all__'
 
-
-# class ExerciseFreetextSerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model = ExerciseFreetext
-#         fields = ['id', 'question', 'answer', 'jlpt_level']
-
-
-# class FreetextSubmissionSerializer(serializers.ModelSerializer):
-#     exercise_details = ExerciseFreetextSerializer(source='exercise', read_only=True)
-#     student_name = serializers.CharField(source='student.username', read_only=True)
-#
-#     class Meta:
-#         model = FreetextSubmission
-#         fields = ['id', 'exercise', 'exercise_details', 'student', 'student_name',
-#                   'student_answer', 'submission_date', 'is_reviewed',
-#                   'is_correct', 'teacher_feedback']
-#         read_only_fields = ['submission_date']
 
 # LESSON SERIALIZERS
 class LessonSerializer(serializers.ModelSerializer):
