@@ -1090,7 +1090,7 @@ class HomeworkOverviewView(APIView):
     def get(self, request, homework_id):
         if not request.user.is_teacher:
             return Response({"detail": "Only teachers can view homework overview"},
-                          status=status.HTTP_403_FORBIDDEN)
+                            status=status.HTTP_403_FORBIDDEN)
 
         try:
             homework = Homework.objects.select_related(
@@ -1098,23 +1098,33 @@ class HomeworkOverviewView(APIView):
             ).get(id=homework_id, teacher=request.user)
         except Homework.DoesNotExist:
             return Response({"detail": "Homework not found"},
-                          status=status.HTTP_404_NOT_FOUND)
+                            status=status.HTTP_404_NOT_FOUND)
 
-        # Get all students in the group
-        total_students = GroupsStudents.objects.filter(
-            group=homework.group,
-            verification_status=True
-        ).count()
+        # Get all students in the group (approved students only)
+        all_students = User.objects.filter(
+            id__in=GroupsStudents.objects.filter(
+                group=homework.group,
+                verification_status=True
+            ).values_list('student_id', flat=True)
+        )
+
+        total_students = all_students.count()
 
         # Get homework results
         results = HomeworkResult.objects.filter(homework=homework).select_related('student')
         completed_count = results.count()
 
+        # Get students who completed the homework
+        completed_student_ids = set(results.values_list('student_id', flat=True))
+
+        # Get students who haven't completed the homework
+        incomplete_students = all_students.exclude(id__in=completed_student_ids)
+
         # Calculate statistics
         completion_rate = (completed_count / total_students * 100) if total_students > 0 else 0
         average_score = results.aggregate(avg_score=Avg('score'))['avg_score'] or 0
 
-        # Serialize results
+        # Serialize completed results
         results_data = []
         for result in results:
             results_data.append({
@@ -1128,6 +1138,16 @@ class HomeworkOverviewView(APIView):
                 },
                 'score': result.score,
                 'completed_date': result.submission_date.isoformat() if hasattr(result, 'submission_date') else None
+            })
+
+        # Serialize incomplete students
+        incomplete_students_data = []
+        for student in incomplete_students:
+            incomplete_students_data.append({
+                'id': student.id,
+                'username': student.username,
+                'first_name': student.first_name,
+                'last_name': student.last_name
             })
 
         overview_data = {
@@ -1155,9 +1175,11 @@ class HomeworkOverviewView(APIView):
             },
             'total_students': total_students,
             'completed_count': completed_count,
+            'incomplete_count': total_students - completed_count,
             'completion_rate': round(completion_rate, 1),
             'average_score': round(average_score, 1),
-            'results': results_data
+            'results': results_data,
+            'incomplete_students': incomplete_students_data
         }
 
         return Response(overview_data)
